@@ -105,7 +105,7 @@ class YoloTfliteDetector(context: Context) {
         }
 
         // ── Load model ───────────────────────────────────────────────
-        val modelBuffer = loadModelFile(context, "newmodel100.tflite")
+        val modelBuffer = loadModelFile(context, "newmodel.tflite")
         Log.i(TAG_TF, "Model file loaded, size = ${modelBuffer.capacity()} bytes")
 
         val options = Interpreter.Options().apply {
@@ -496,9 +496,15 @@ class YoloTfliteDetector(context: Context) {
             // Apply per-class confidence thresholds
             val className = labels.getOrElse(bestClassId) { "" }
             val classThreshold = when (className) {
-                "car" -> 0.7f                    // 70% for cars
-                "Crosswalks" -> 0.6f             // 60% for crosswalks
-                else -> confidenceThreshold      // 30% for everything else
+                "car" -> 0.4f
+                "Crosswalks" -> 0.6f
+                "10CanadianDollar" -> 0.9f
+                "50CanadianDollar" -> 0.9f
+                "100CanadianDollar" -> 0.5f
+                "20CanadianDollar" -> 0.5f
+                "5CanadianDollar" -> 0.5f
+                "red pedestrian light" -> 0.5f
+                else -> confidenceThreshold
             }
             
             if (confidence < classThreshold) continue

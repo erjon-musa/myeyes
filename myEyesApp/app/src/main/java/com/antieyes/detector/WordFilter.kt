@@ -36,9 +36,6 @@ class WordFilter(context: Context, private val enableFuzzy: Boolean = false) {
     /** Minimum word length to bother checking */
     private val minWordLength = 2
 
-    /** Digit sequences longer than this are rejected outright */
-    private val maxDigitSequenceLength = 7
-
     init {
         val startMs = System.currentTimeMillis()
         dictionary = HashSet()
@@ -80,9 +77,9 @@ class WordFilter(context: Context, private val enableFuzzy: Boolean = false) {
                 isDigitLetterMix(cleaned) -> {
                     Log.d(TAG, "Rejected (digit-letter mix): \"$raw\"")
                 }
-                // Reject: long digit-only sequences (serial numbers, codes)
-                isLongDigitSequence(cleaned) -> {
-                    Log.d(TAG, "Rejected (long digit seq): \"$raw\"")
+                // Reject: any purely numeric token (serial numbers, codes, prices)
+                isPureDigits(cleaned) -> {
+                    Log.d(TAG, "Rejected (pure digits): \"$raw\"")
                 }
                 // Reject: mostly symbols / punctuation
                 isMostlySymbols(raw) -> {
@@ -135,9 +132,9 @@ class WordFilter(context: Context, private val enableFuzzy: Boolean = false) {
         return hasDigit && hasLetter
     }
 
-    /** True if the token is all digits and too long (serial number / code) */
-    private fun isLongDigitSequence(s: String): Boolean {
-        return s.all { it.isDigit() } && s.length > maxDigitSequenceLength
+    /** True if the token is entirely digits (any length) */
+    private fun isPureDigits(s: String): Boolean {
+        return s.isNotEmpty() && s.all { it.isDigit() }
     }
 
     /** True if most of the original token is symbols / non-alphanumeric */

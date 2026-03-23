@@ -125,35 +125,6 @@
             android:textAlignment="center"
             android:layout_marginBottom="16dp" />
 
-        <!-- Screenshot toggle switch -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="16dp"
-            android:padding="12dp"
-            android:background="#1A1A1A">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="CAPTURE SCREENSHOTS"
-                android:textColor="#AAAAAA"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:fontFamily="monospace" />
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switchScreenshot"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:checked="false"
-                app:thumbTint="#00FFAA"
-                app:trackTint="#333333" />
-        </LinearLayout>
-
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

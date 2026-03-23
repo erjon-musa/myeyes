@@ -1,6 +1,6 @@
-description: Ultralytics best model trained on /home/talderson/jons_bullshit/myeyes_march-no-USD-2/data.yaml
+description: Ultralytics best model trained on /home/talderson/jons_bullshit/myeyes_myeyes-1/data.yaml
 author: Ultralytics
-date: '2026-03-11T01:32:04.238740'
+date: '2026-03-17T03:05:04.134151'
 version: 8.4.19
 license: AGPL-3.0 License (https://ultralytics.com/license)
 docs: https://docs.ultralytics.com
@@ -20,9 +20,8 @@ names:
   6: Important Text
   7: car
   8: green pedestrian light
-  9: pedestrian light
-  10: red pedestrian light
-  11: stop
+  9: red pedestrian light
+  10: stop
 args:
   batch: 1
   fraction: 1.0

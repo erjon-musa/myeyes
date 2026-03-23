@@ -7,6 +7,5 @@ Crosswalks
 Important Text
 car
 green pedestrian light
-pedestrian light
 red pedestrian light
 stop

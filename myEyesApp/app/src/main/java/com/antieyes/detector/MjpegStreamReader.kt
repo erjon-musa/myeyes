@@ -29,9 +29,6 @@ class MjpegStreamReader {
     /** Latest decoded frame (rotated). Consumers read this; old frames are dropped. */
     val latestFrame = AtomicReference<Bitmap?>(null)
 
-    /** Callback for unrotated frames (for screenshots) */
-    var onUnrotatedFrame: ((Bitmap) -> Unit)? = null
-
     private var job: Job? = null
     private var frameCount = 0L
     private var startTimeMs = 0L
@@ -144,17 +141,15 @@ class MjpegStreamReader {
             return
         }
 
-        // Notify callback with unrotated frame (for screenshots)
-        onUnrotatedFrame?.invoke(bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false))
-
         // Rotate the bitmap by 90 degrees clockwise (no stretch, no crop)
         val rotatedBitmap = rotateBitmap(bitmap, 90f)
         
         // Recycle the original bitmap since we created a rotated copy
         bitmap.recycle()
 
-        // Swap in the new frame; let GC handle old frames
-        latestFrame.set(rotatedBitmap)
+        // Swap in the new frame; recycle any unconsumed old frame
+        val oldFrame = latestFrame.getAndSet(rotatedBitmap)
+        try { oldFrame?.recycle() } catch (_: Exception) {}
 
         if (frameCount <= 3 || frameCount % 100 == 0L) {
             val elapsedSec = (System.currentTimeMillis() - startTimeMs) / 1000.0
@@ -206,6 +201,7 @@ class MjpegStreamReader {
         isConnected = false
         job?.cancel()
         job = null
-        latestFrame.set(null)
+        val remaining = latestFrame.getAndSet(null)
+        try { remaining?.recycle() } catch (_: Exception) {}
     }
 }

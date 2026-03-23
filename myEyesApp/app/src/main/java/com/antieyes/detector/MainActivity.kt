@@ -7,30 +7,21 @@ import android.graphics.Bitmap
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Bundle
-import android.os.Environment
 import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
-import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.widget.SwitchCompat
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
-import java.io.File
-import java.io.FileOutputStream
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicReference
 
 private const val TAG_PERF = "PERF"
 private const val TAG_MAIN = "MAIN_ACTIVITY"
 private const val CAMERA_PERMISSION_CODE = 1001
-private const val STORAGE_PERMISSION_CODE = 1002
 
 private const val PREFS_NAME = "MyEyesPrefs"
 private const val PREF_URL_KEY = "last_stream_url"
@@ -41,7 +32,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnConnect: Button
     private lateinit var btnCamera: Button
     private lateinit var btnDisconnect: Button
-    private lateinit var switchScreenshot: SwitchCompat
     private lateinit var ivVideoFrame: ImageView
     private lateinit var previewView: PreviewView
     private lateinit var overlayView: OverlayView
@@ -75,11 +65,6 @@ class MainActivity : AppCompatActivity() {
     private enum class SourceMode { NONE, ESP32, CAMERA }
     private var currentMode = SourceMode.NONE
 
-    /** Screenshot capture */
-    private var screenshotJob: Job? = null
-    private var lastScreenshotTime = 0L
-    private val screenshotIntervalMs = 1000L  // 1 second
-    private var isScreenshotEnabled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -94,7 +79,6 @@ class MainActivity : AppCompatActivity() {
         btnConnect = findViewById(R.id.btnConnect)
         btnCamera = findViewById(R.id.btnCamera)
         btnDisconnect = findViewById(R.id.btnDisconnect)
-        switchScreenshot = findViewById(R.id.switchScreenshot)
         ivVideoFrame = findViewById(R.id.ivVideoFrame)
         previewView = findViewById(R.id.previewView)
         overlayView = findViewById(R.id.overlayView)
@@ -144,21 +128,6 @@ class MainActivity : AppCompatActivity() {
         btnDisconnect.setOnClickListener {
             disconnect()
         }
-
-        // ── Screenshot toggle handler ────────────────────────────────────
-        switchScreenshot.setOnCheckedChangeListener { _, isChecked ->
-            if (isChecked) {
-                // Check storage permission before starting
-                if (checkStoragePermission()) {
-                    startScreenshotCapture()
-                } else {
-                    requestStoragePermission()
-                    switchScreenshot.isChecked = false // Turn off switch until permission granted
-                }
-            } else {
-                stopScreenshotCapture()
-            }
-        }
     }
 
     // ── ESP32 MJPEG stream ───────────────────────────────────────────
@@ -205,11 +174,6 @@ class MainActivity : AppCompatActivity() {
         
         // Route TTS audio to ESP32 speakers
         announcer.esp32Url = url
-
-        // Set up screenshot callback if screenshots are enabled
-        if (isScreenshotEnabled) {
-            setupScreenshotCallback()
-        }
 
         startDisplayLoop()
         startInferenceLoop()
@@ -267,15 +231,6 @@ class MainActivity : AppCompatActivity() {
                     Log.w(TAG_MAIN, "CAMERA permission denied")
                 }
             }
-            STORAGE_PERMISSION_CODE -> {
-                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Log.i(TAG_MAIN, "STORAGE permission granted")
-                    switchScreenshot.isChecked = true // Re-enable the switch
-                    startScreenshotCapture()
-                } else {
-                    Log.w(TAG_MAIN, "STORAGE permission denied")
-                }
-            }
         }
     }
 
@@ -296,7 +251,8 @@ class MainActivity : AppCompatActivity() {
         cameraSource = null
 
         activeFrameSource = null
-        inferenceFrame.set(null)
+        val leftoverInf = inferenceFrame.getAndSet(null)
+        try { leftoverInf?.recycle() } catch (_: Exception) {}
         latestDetections = emptyList()
         currentMode = SourceMode.NONE
         
@@ -326,65 +282,63 @@ class MainActivity : AppCompatActivity() {
 
             delay(300)
 
-            while (isActive) {
-                val source = activeFrameSource
-                if (source == null) {
-                    delay(30)
-                    continue
+            var currentDisplayBitmap: Bitmap? = null
+            var previousDisplayBitmap: Bitmap? = null
+
+            try {
+                while (isActive) {
+                    val source = activeFrameSource
+                    if (source == null) {
+                        delay(30)
+                        continue
+                    }
+
+                    // Consume the latest frame (take ownership from stream reader).
+                    // Between new frames the stream returns null — we just keep showing the last one.
+                    val newFrame = source.getAndSet(null)
+
+                    if (newFrame != null) {
+                        // One copy for inference (only when a genuinely new frame arrives)
+                        try {
+                            val infCopy = newFrame.copy(newFrame.config ?: Bitmap.Config.ARGB_8888, false)
+                            val oldInf = inferenceFrame.getAndSet(infCopy)
+                            try { oldInf?.recycle() } catch (_: Exception) {}
+                        } catch (_: Exception) {}
+
+                        // Display the original bitmap directly (no second copy needed)
+                        ivVideoFrame.setImageBitmap(newFrame)
+
+                        // Recycle the bitmap from 2 frames ago; the one from 1 frame ago
+                        // may still be in the GPU render pipeline.
+                        try { previousDisplayBitmap?.recycle() } catch (_: Exception) {}
+                        previousDisplayBitmap = currentDisplayBitmap
+                        currentDisplayBitmap = newFrame
+                    }
+
+                    // Always update the detection overlay (results arrive asynchronously)
+                    val dets = latestDetections
+                    if (latestDetFrameW > 0) {
+                        overlayView.setDetections(dets, latestDetFrameW, latestDetFrameH)
+                    }
+
+                    frameCount++
+                    val elapsed = (System.currentTimeMillis() - fpsStartTime) / 1000.0
+                    val fps = if (elapsed > 0) frameCount / elapsed else 0.0
+                    val infMs = latestInferenceMs
+
+                    if (frameCount <= 3 || frameCount % 100 == 0L) {
+                        Log.d(TAG_PERF, "Display #$frameCount [ESP32]: " +
+                                "displayFPS=${"%.1f".format(fps)}, lastInfer=${infMs}ms, " +
+                                "overlayDets=${dets.size}")
+                    }
+
+                    delay(33)
                 }
-
-                // Peek at the latest frame without consuming it
-                // (inference loop will consume its own copy)
-                val frame = source.get()
-                if (frame == null) {
-                    delay(15)
-                    continue
-                }
-
-                // Make a defensive copy for display so we don't get color glitches
-                // from concurrent access with the stream reader thread
-                val displayFrame: Bitmap
-                try {
-                    displayFrame = frame.copy(frame.config ?: Bitmap.Config.ARGB_8888, false)
-                } catch (e: Exception) {
-                    delay(15)
-                    continue
-                }
-
-                // Also provide a copy for inference if it needs one
-                val oldInfFrame = inferenceFrame.getAndSet(
-                    displayFrame.copy(displayFrame.config ?: Bitmap.Config.ARGB_8888, false)
-                )
-                // Recycle old inference frame copy
-                try { oldInfFrame?.recycle() } catch (_: Exception) {}
-
-                // Show the frame immediately
-                ivVideoFrame.setImageBitmap(displayFrame)
-
-                // Update FPS counter (internal only)
-                frameCount++
-                val elapsed = (System.currentTimeMillis() - fpsStartTime) / 1000.0
-                val fps = if (elapsed > 0) frameCount / elapsed else 0.0
-                val infMs = latestInferenceMs
-                val dets = latestDetections
-
-                // Draw latest detection overlay (always update, even if empty, to clear old detections)
-                if (latestDetFrameW > 0) {
-                    overlayView.setDetections(dets, latestDetFrameW, latestDetFrameH)
-                }
-
-                // Log periodically
-                if (frameCount <= 3 || frameCount % 100 == 0L) {
-                    Log.d(TAG_PERF, "Display #$frameCount [ESP32]: " +
-                            "displayFPS=${"%.1f".format(fps)}, lastInfer=${infMs}ms, " +
-                            "overlayDets=${dets.size}")
-                }
-
-                // Target ~30fps display rate
-                delay(33)
+            } finally {
+                try { currentDisplayBitmap?.recycle() } catch (_: Exception) {}
+                try { previousDisplayBitmap?.recycle() } catch (_: Exception) {}
+                Log.i(TAG_MAIN, "Display loop ended")
             }
-
-            Log.i(TAG_MAIN, "Display loop ended")
         }
     }
 
@@ -406,10 +360,15 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     val source = activeFrameSource
                     val raw = source?.getAndSet(null)
-                    // Make a copy so the source can continue independently
                     if (raw != null) {
-                        try { raw.copy(raw.config ?: Bitmap.Config.ARGB_8888, false) }
-                        catch (e: Exception) { null }
+                        try {
+                            val copy = raw.copy(raw.config ?: Bitmap.Config.ARGB_8888, false)
+                            raw.recycle()
+                            copy
+                        } catch (e: Exception) {
+                            try { raw.recycle() } catch (_: Exception) {}
+                            null
+                        }
                     } else null
                 }
 
@@ -472,103 +431,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ── Screenshot capture ───────────────────────────────────────────
-
-    private fun checkStoragePermission(): Boolean {
-        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            // Android 13+ doesn't need storage permission for external storage access
-            true
-        } else {
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE
-            ) == PackageManager.PERMISSION_GRANTED
-        }
-    }
-
-    private fun requestStoragePermission() {
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
-            Log.i(TAG_MAIN, "Requesting STORAGE permission...")
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                STORAGE_PERMISSION_CODE
-            )
-        }
-    }
-
-    private fun startScreenshotCapture() {
-        Log.i(TAG_MAIN, "Starting screenshot capture (1 per second)")
-        isScreenshotEnabled = true
-        
-        // Create screenshots directory in app's external storage
-        val screenshotsDir = File(getExternalFilesDir(null), "screenshots")
-        if (!screenshotsDir.exists()) {
-            val created = screenshotsDir.mkdirs()
-            Log.i(TAG_MAIN, "Created screenshots directory: ${screenshotsDir.absolutePath} (success=$created)")
-        } else {
-            Log.i(TAG_MAIN, "Screenshots directory already exists: ${screenshotsDir.absolutePath}")
-        }
-
-        // Set up callback if ESP32 is already connected
-        setupScreenshotCallback()
-    }
-
-    private fun setupScreenshotCallback() {
-        if (streamReader == null) {
-            Log.w(TAG_MAIN, "Cannot setup screenshot callback - ESP32 not connected yet")
-            return
-        }
-
-        Log.i(TAG_MAIN, "Setting up screenshot callback on ESP32 stream")
-        
-        // Set up callback for unrotated frames from ESP32
-        streamReader?.onUnrotatedFrame = { bitmap ->
-            val now = System.currentTimeMillis()
-            if (now - lastScreenshotTime >= screenshotIntervalMs) {
-                lastScreenshotTime = now
-                scope.launch(Dispatchers.IO) {
-                    saveScreenshot(bitmap)
-                }
-            }
-        }
-    }
-
-    private fun stopScreenshotCapture() {
-        Log.i(TAG_MAIN, "Stopping screenshot capture")
-        isScreenshotEnabled = false
-        screenshotJob?.cancel()
-        screenshotJob = null
-        streamReader?.onUnrotatedFrame = null
-    }
-
-    private fun saveScreenshot(bitmap: Bitmap) {
-        try {
-            val screenshotsDir = File(getExternalFilesDir(null), "screenshots")
-            
-            // Ensure directory exists
-            if (!screenshotsDir.exists()) {
-                screenshotsDir.mkdirs()
-            }
-            
-            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
-            val filename = "esp32_$timestamp.jpg"
-            val file = File(screenshotsDir, filename)
-
-            FileOutputStream(file).use { out ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
-            }
-            
-            Log.i(TAG_MAIN, "✓ Screenshot saved: $filename (${bitmap.width}x${bitmap.height})")
-            Log.i(TAG_MAIN, "   Path: ${file.absolutePath}")
-        } catch (e: Exception) {
-            Log.e(TAG_MAIN, "✗ Failed to save screenshot: ${e.message}", e)
-        }
-    }
-
     override fun onDestroy() {
         super.onDestroy()
-        stopScreenshotCapture()
         disconnect()
         announcer.shutdown()
         detector?.close()

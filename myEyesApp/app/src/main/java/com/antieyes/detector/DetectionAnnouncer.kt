@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "TTS_ANNOUNCER"
 
@@ -55,26 +56,37 @@ class DetectionAnnouncer(context: Context) : TextToSpeech.OnInitListener {
     /** Longer cooldown for OCR classes so we don't spam while processing */
     var ocrCooldownMs: Long = 6_000L
 
+    /** True while TTS is actively speaking an OCR utterance — blocks new OCR triggers */
+    private val isSpeakingOcr = AtomicBoolean(false)
+
     // ── Fixed prompt mapping (non-OCR classes) ───────────────────────
 
     private val promptMap = mapOf(
         "Crosswalks"             to "Crosswalk ahead",
         "car"                    to "Careful, car ahead",
         "green pedestrian light" to "Green pedestrian light ahead",
-        "pedestrian light"       to "Pedestrian light ahead",
         "red pedestrian light"   to "Red pedestrian light ahead",
-        "stop"                   to "Stop sign ahead"
+        "stop"                   to "Stop sign ahead",
+        "5CanadianDollar"        to "5 dollars",
+        "10CanadianDollar"       to "10 dollars",
+        "20CanadianDollar"       to "20 dollars",
+        "50CanadianDollar"       to "50 dollars",
+        "100CanadianDollar"      to "100 dollars"
     )
 
     /** Special classes that need contextual logic */
     private val crosswalkClasses = setOf("Crosswalks")
-    private val trafficLightClasses = setOf("green pedestrian light", "red pedestrian light", "pedestrian light")
+    private val trafficLightClasses = setOf("green pedestrian light", "red pedestrian light")
 
     /** Classes that need OCR before speaking */
     private val ocrClasses = setOf(
-        "Important Text",
-        "100CanadianDollar", "50CanadianDollar", "20CanadianDollar", "10CanadianDollar", "5CanadianDollar"
+        "Important Text"
     )
+
+    companion object {
+        /** Utterance ID prefix used to identify OCR speech for completion tracking */
+        private const val OCR_UTTERANCE_PREFIX = "ocr_"
+    }
 
     // ── TTS init callback ────────────────────────────────────────────
 
@@ -99,16 +111,24 @@ class DetectionAnnouncer(context: Context) : TextToSpeech.OnInitListener {
             override fun onStart(utteranceId: String?) {}
 
             @Deprecated("Deprecated in Java")
-            override fun onError(utteranceId: String?) {}
+            override fun onError(utteranceId: String?) {
+                if (utteranceId?.startsWith(OCR_UTTERANCE_PREFIX) == true) {
+                    isSpeakingOcr.set(false)
+                    Log.d(TAG, "OCR utterance error, unlocking OCR gate")
+                }
+            }
 
             override fun onDone(utteranceId: String?) {
+                if (utteranceId?.startsWith(OCR_UTTERANCE_PREFIX) == true) {
+                    isSpeakingOcr.set(false)
+                    Log.d(TAG, "OCR utterance finished, unlocking OCR gate")
+                }
+
                 if (utteranceId == null || esp32Url == null) return
                 
-                // When synthesis is done, grab the WAV file and send it
                 val wavFile = File(appContext.cacheDir, "tts_$utteranceId.wav")
                 if (wavFile.exists() && wavFile.length() > 0) {
                     val urlToSendTo = esp32Url!!
-                    // Launch background coroutine to upload the file
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
                             val success = audioSender.sendWavFile(urlToSendTo, wavFile)
@@ -116,7 +136,6 @@ class DetectionAnnouncer(context: Context) : TextToSpeech.OnInitListener {
                                 Log.w(TAG, "Failed to send audio to ESP32: $utteranceId")
                             }
                         } finally {
-                            // Clean up temp file
                             wavFile.delete()
                         }
                     }
@@ -148,55 +167,72 @@ class DetectionAnnouncer(context: Context) : TextToSpeech.OnInitListener {
 
         val now = System.currentTimeMillis()
 
-        // First, check for crosswalk + traffic light combinations
         val crosswalkDetection = detections.find { it.className in crosswalkClasses }
         val hasCrosswalk = crosswalkDetection != null
         val greenLight = detections.find { it.className == "green pedestrian light" }
         val redLight = detections.find { it.className == "red pedestrian light" }
-        val unknownLight = detections.find { it.className == "pedestrian light" }
         val cars = detections.filter { it.className == "car" }
 
-        // Check if any car overlaps with the crosswalk
         val carInCrosswalk = if (hasCrosswalk && cars.isNotEmpty()) {
             cars.any { car -> boundingBoxesOverlap(crosswalkDetection!!, car) }
         } else {
             false
         }
 
-        // Handle crosswalk safety announcements
-        if (hasCrosswalk) {
+        var greenLightHandled = false
+
+        // Green pedestrian light takes priority — works with or without crosswalk
+        if (greenLight != null) {
+            val greenKey = "green_light_safety"
+            val last = lastSpokenAt[greenKey] ?: 0L
+
+            if (now - last >= cooldownMs) {
+                if (cars.isNotEmpty()) {
+                    speak("Green pedestrian light, car crossing, not safe to cross", "green_car_warning")
+                    lastSpokenAt[greenKey] = now
+                    lastSpokenAt["green pedestrian light"] = now
+                    lastSpokenAt["car"] = now
+                    if (hasCrosswalk) {
+                        lastSpokenAt["crosswalk_safety"] = now
+                        lastSpokenAt["Crosswalks"] = now
+                    }
+                    Log.d(TAG, "Speaking: Green light + car - NOT SAFE TO CROSS")
+                } else {
+                    speak("Green pedestrian light, safe to cross", "green_safe")
+                    lastSpokenAt[greenKey] = now
+                    lastSpokenAt["green pedestrian light"] = now
+                    if (hasCrosswalk) {
+                        lastSpokenAt["crosswalk_safety"] = now
+                        lastSpokenAt["Crosswalks"] = now
+                    }
+                    Log.d(TAG, "Speaking: Green light, no car - SAFE TO CROSS")
+                }
+                greenLightHandled = true
+            }
+        }
+
+        // Handle remaining crosswalk announcements (only if green light wasn't just spoken)
+        if (hasCrosswalk && !greenLightHandled) {
             val crosswalkKey = "crosswalk_safety"
             val last = lastSpokenAt[crosswalkKey] ?: 0L
-            
+
             if (now - last >= cooldownMs) {
                 when {
                     carInCrosswalk -> {
-                        // Car in crosswalk - highest priority warning
                         speak("Car in crosswalk, careful", "crosswalk_car_warning")
                         lastSpokenAt[crosswalkKey] = now
                         lastSpokenAt["Crosswalks"] = now
-                        lastSpokenAt["car"] = now  // prevent duplicate car announcement
+                        lastSpokenAt["car"] = now
                         Log.d(TAG, "Speaking: CAR IN CROSSWALK - WARNING")
                     }
-                    greenLight != null -> {
-                        // Crosswalk + green light = safe to cross
-                        speak("Green pedestrian light ahead, safe to cross", "crosswalk_safe")
-                        lastSpokenAt[crosswalkKey] = now
-                        lastSpokenAt["green pedestrian light"] = now  // prevent duplicate announcement
-                        lastSpokenAt["Crosswalks"] = now
-                        Log.d(TAG, "Speaking: Crosswalk with green light - SAFE TO CROSS")
-                    }
-                    redLight != null || unknownLight != null -> {
-                        // Crosswalk + red or unknown light = NOT safe to cross
+                    redLight != null -> {
                         speak("Red pedestrian light ahead, NOT safe to cross. Wait...", "crosswalk_unsafe")
                         lastSpokenAt[crosswalkKey] = now
-                        lastSpokenAt["red pedestrian light"] = now  // prevent duplicate announcement
-                        lastSpokenAt["pedestrian light"] = now
+                        lastSpokenAt["red pedestrian light"] = now
                         lastSpokenAt["Crosswalks"] = now
-                        Log.d(TAG, "Speaking: Crosswalk with red/unknown light - NOT SAFE TO CROSS")
+                        Log.d(TAG, "Speaking: Crosswalk with red light - NOT SAFE TO CROSS")
                     }
                     else -> {
-                        // Crosswalk detected but no traffic light visible
                         val crosswalkLast = lastSpokenAt["Crosswalks"] ?: 0L
                         if (now - crosswalkLast >= cooldownMs) {
                             speak("Crosswalk ahead", "det_Crosswalks")
@@ -208,25 +244,21 @@ class DetectionAnnouncer(context: Context) : TextToSpeech.OnInitListener {
             }
         }
 
-        // Now handle all other detections (excluding crosswalks and lights that were already announced)
+        // Handle all other detections individually
         for (det in detections) {
             val cls = det.className
 
-            // Skip crosswalk and traffic lights if they were part of a combined announcement
-            if (hasCrosswalk && (cls in crosswalkClasses || cls in trafficLightClasses)) {
-                continue
-            }
-
-            // Skip cars that were announced as part of "car in crosswalk" warning
-            if (carInCrosswalk && cls == "car") {
-                continue
-            }
+            if (greenLightHandled && (cls == "green pedestrian light" || cls == "car")) continue
+            if (greenLightHandled && hasCrosswalk && cls in crosswalkClasses) continue
+            if (!greenLightHandled && hasCrosswalk && (cls in crosswalkClasses || cls in trafficLightClasses)) continue
+            if (!greenLightHandled && carInCrosswalk && cls == "car") continue
 
             if (cls in ocrClasses) {
-                // OCR-based announcement
+                // OCR-based announcement — skip if TTS is still reading previous OCR
+                if (isSpeakingOcr.get()) continue
                 val last = lastSpokenAt[cls] ?: 0L
                 if (now - last >= ocrCooldownMs) {
-                    lastSpokenAt[cls] = now   // mark immediately to prevent re-trigger
+                    lastSpokenAt[cls] = now
                     announceWithOcr(det, frameBitmap)
                 }
             } else {
@@ -276,7 +308,6 @@ class DetectionAnnouncer(context: Context) : TextToSpeech.OnInitListener {
             speak("Money detected...", "det_intro_${det.className}")
         }
 
-        // Run PaddleOCR on a background thread
         ocrExecutor.execute {
             try {
                 Log.d(TAG, "Starting OCR for ${det.className}, crop size: ${crop.width}x${crop.height}")
@@ -287,12 +318,11 @@ class DetectionAnnouncer(context: Context) : TextToSpeech.OnInitListener {
                     if (isMoney) {
                         val estimate = estimateMoney(fullText, det.className)
                         Log.i(TAG, "Money estimate: \"$estimate\"")
-                        speak(estimate, "det_ocr_money")
+                        speakOcr(estimate, "${OCR_UTTERANCE_PREFIX}money_${System.nanoTime()}")
                     } else {
-                        // Bypass strict word filter for now, just clean slightly and speak
                         val cleanedText = fullText.replace(Regex("[^a-zA-Z0-9.,\\s]"), " ").trim()
                         if (cleanedText.isNotBlank()) {
-                            speak("It says: $cleanedText", "det_ocr_text")
+                            speakOcr("It says: $cleanedText", "${OCR_UTTERANCE_PREFIX}text_${System.nanoTime()}")
                             Log.i(TAG, "SPEAKING raw text: \"$cleanedText\"")
                         } else {
                             Log.w(TAG, "OCR text was blank after cleaning: \"$fullText\"")
@@ -300,9 +330,8 @@ class DetectionAnnouncer(context: Context) : TextToSpeech.OnInitListener {
                     }
                 } else {
                     Log.w(TAG, "PaddleOCR returned null or empty text for ${det.className}")
-                    // Fallback if we really found nothing
                     if (!isMoney) {
-                        speak("Text detected, but could not read it clearly", "det_ocr_fail")
+                        speakOcr("Text detected, but could not read it clearly", "${OCR_UTTERANCE_PREFIX}fail_${System.nanoTime()}")
                     }
                 }
             } catch (e: Exception) {
@@ -384,6 +413,16 @@ class DetectionAnnouncer(context: Context) : TextToSpeech.OnInitListener {
 
     // ── Helpers ───────────────────────────────────────────────────────
 
+    /**
+     * Speak OCR text and lock the gate so no new OCR triggers until this finishes.
+     * The gate is released in the UtteranceProgressListener onDone/onError callbacks.
+     */
+    private fun speakOcr(text: String, utteranceId: String) {
+        isSpeakingOcr.set(true)
+        Log.d(TAG, "OCR gate locked, speaking: \"$text\"")
+        speak(text, utteranceId)
+    }
+
     private fun speak(text: String, utteranceId: String) {
         val url = esp32Url
         if (url != null) {
@@ -399,6 +438,7 @@ class DetectionAnnouncer(context: Context) : TextToSpeech.OnInitListener {
     /** Clean up the TTS engine and OCR. Call from Activity.onDestroy(). */
     fun shutdown() {
         Log.i(TAG, "Shutting down TTS engine and PaddleOCR")
+        isSpeakingOcr.set(false)
         tts?.stop()
         tts?.shutdown()
         tts = null
