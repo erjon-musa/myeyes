@@ -1,0 +1,36 @@
+# myEyes Android Application
+
+The `myEyesApp` is a core component of the MyEyes assistance system, designed to provide real-time object detection and spatial awareness for users with visual impairments.
+
+## 🚀 Key Features
+
+- **Real-time Detection**: Powered by YOLO TFLite models for fast and accurate object recognition.
+- **ESP32 Integration**: Communicates with the ESP32 system controller to handle external sensor data and user feedback.
+- **Accessibility Prioritized**: Designed with high contrast, voice feedback, and intuitive navigation.
+- **Dynamic Streaming**: Interfaces with the ESP32 camera stream for live processing.
+
+## 🛠️ Tech Stack
+
+- **Language**: Kotlin
+- **Framework**: Android SDK
+- **AI/ML**: TensorFlow Lite (YOLO)
+- **Networking**: WiFi-based communication with ESP32
+
+## 📝 Setup and Running
+
+1.  **Clone the Repository**: Ensure you have the full monorepo.
+2.  **Open in Android Studio**: Open the `myEyesApp` folder as an Android project.
+3.  **Sync Gradle**: Allow Android Studio to download dependencies.
+4.  **Connect Hardware**: Power on the MyEyes glasses and connect your phone to the "MyEyes" WiFi network.
+5.  **Build and Run**: Deploy the app to your Android device.
+
+---
+
+## 👥 Team
+
+**Group 25 — Winter 2026 Capstone Project**
+- Developed as part of an academic capstone course.
+
+## 📄 License
+
+Please contact the development team for licensing and academic reuse inquiries.
