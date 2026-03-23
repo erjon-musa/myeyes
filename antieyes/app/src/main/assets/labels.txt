@@ -1,0 +1,12 @@
+100CanadianDollar
+10CanadianDollar
+20CanadianDollar
+50CanadianDollar
+5CanadianDollar
+Crosswalks
+Important Text
+car
+green pedestrian light
+pedestrian light
+red pedestrian light
+stop
