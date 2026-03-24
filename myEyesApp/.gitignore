@@ -71,3 +71,4 @@ lint-results*.html
 
 # Android Profiling
 *.hprof
+google-services.json
