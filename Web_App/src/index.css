@@ -1,0 +1,37 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --bg-color: #0f111a;
+  --panel-bg: rgba(25, 28, 41, 0.6);
+  --panel-border: rgba(255, 255, 255, 0.05);
+  --text-primary: #f8f9fa;
+  --text-secondary: #a0aab2;
+  --accent: #3b82f6;
+  --accent-glow: rgba(59, 130, 246, 0.4);
+  --danger: #ef4444;
+  --success: #10b981;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  min-height: 100vh;
+  margin: 0;
+  display: flex;
+  justify-content: center;
+  /* Add a modern background mesh/gradient */
+  background: radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.15), transparent 25%),
+              radial-gradient(circle at 85% 30%, rgba(16, 185, 129, 0.1), transparent 25%),
+              var(--bg-color);
+}
+
+#root {
+  width: 100%;
+}

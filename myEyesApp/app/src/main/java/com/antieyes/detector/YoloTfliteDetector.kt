@@ -11,6 +11,9 @@ import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import kotlin.math.exp
 
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FieldValue
+
 private const val TAG_TF = "TFLITE"
 private const val TAG_DECODE = "YOLO_DECODE"
 private const val TAG_PERF = "PERF"
@@ -65,6 +68,9 @@ class YoloTfliteDetector(context: Context) {
         private set
     var lastInferenceMs = 0L
         private set
+
+    private val db = FirebaseFirestore.getInstance()
+    private var lastFirebasePubTime = 0L
 
     data class DebugInfo(
         val inputShape: String,
@@ -575,6 +581,26 @@ class YoloTfliteDetector(context: Context) {
         if (isFirstFrame) {
             isFirstFrame = false
             Log.i(TAG_TF, "═══ First frame processing complete ═══")
+        }
+
+        // ── Publish to Firebase ──────────────────────────────────────────
+        val currentTime = System.currentTimeMillis()
+        if (results.isNotEmpty() && currentTime - lastFirebasePubTime > 1500) { // Throttle to 1 push per 1.5s
+            lastFirebasePubTime = currentTime
+            for (det in results) {
+                if (det.confidence > 0.5f) {
+                    val detectionData = hashMapOf(
+                        "className" to det.className,
+                        "confidence" to det.confidence,
+                        "timestamp" to java.text.SimpleDateFormat("hh:mm:ss a", java.util.Locale.getDefault()).format(java.util.Date()),
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                    db.collection("detections")
+                        .add(detectionData)
+                        .addOnSuccessListener { Log.d(TAG_TF, "Firebase write success: ${det.className}") }
+                        .addOnFailureListener { e -> Log.w(TAG_TF, "Firebase write failed", e) }
+                }
+            }
         }
 
         return results

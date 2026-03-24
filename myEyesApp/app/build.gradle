@@ -1,6 +1,7 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
+    id 'com.google.gms.google-services'
 }
 
 android {
@@ -63,4 +64,11 @@ dependencies {
 
     // PaddleOCR for on-device text recognition
     implementation 'com.github.equationl.paddleocr4android:paddleocr4android:v1.3.0'
+
+    // Guava (Fixes ListenableFuture for CameraX)
+    implementation 'com.google.guava:guava:33.0.0-android'
+
+    // Firebase
+    implementation platform('com.google.firebase:firebase-bom:33.7.0')
+    implementation 'com.google.firebase:firebase-firestore-ktx'
 }
