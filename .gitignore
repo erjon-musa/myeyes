@@ -1,0 +1,103 @@
+# ════════════════════════════════════════════════════════════════
+#  MyEyes — Root .gitignore
+# ════════════════════════════════════════════════════════════════
+
+# ── Model Weights & ML Artifacts ──────────────────────────────
+# TFLite models (YOLO, PaddleOCR, ML Kit, etc.)
+*.tflite
+# PaddleOCR compiled models
+*.nb
+# PyTorch / ONNX / TensorFlow model files
+*.pt
+*.pth
+*.onnx
+*.pb
+*.h5
+*.weights
+*.caffemodel
+# Protobuf model files
+*.pb
+
+# ── Archives (large binary files) ─────────────────────────────
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# ── Android Build & IDE ───────────────────────────────────────
+# Gradle
+.gradle/
+**/build/
+*.iml
+
+# Android Studio / IntelliJ
+.idea/
+.navigation/
+captures/
+*.hprof
+
+# Local configuration (contains SDK paths)
+local.properties
+
+# Keystore files (signing keys)
+*.jks
+*.keystore
+
+# Google Services config (API keys)
+google-services.json
+
+# External native build
+.externalNativeBuild/
+.cxx/
+
+# APK / AAB outputs
+*.apk
+*.ap_
+*.aab
+
+# Lint
+lint/intermediates/
+lint/generated/
+lint/outputs/
+lint/tmp/
+lint-results*.xml
+lint-results*.html
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output/
+
+# Screenshots captured by the app
+screenshots/
+
+# Kotlin
+.kotlin/
+
+# ── PlatformIO (ESP32) ────────────────────────────────────────
+.pio/
+.vscode/.browse.c_cpp.db*
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch
+
+# ── General IDE & OS ──────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+*.swo
+*~
+
+# VS Code workspace settings (optional, keep if you want shared settings)
+.vscode/settings.json
+
+# ── Gemini / AI agent artifacts ───────────────────────────────
+.gemini/
+.agents/
+_agents/
+
+# ── Resolved merge files ─────────────────────────────────────
+*.resolved
